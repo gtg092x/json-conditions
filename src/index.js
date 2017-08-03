@@ -1,80 +1,92 @@
-/* eslint-disable no-use-before-define */
 import {
-  isDate,
-  isNumber,
-  isString,
   isPlainObject,
   isFunction,
   get,
+  isRegExp,
 } from 'lodash';
-import {isMatch} from 'micromatch';
+import * as OPS from './ops';
 
-function coerce(rule, val) {
-  if (isNumber(val)) {
-    return Number(rule);
+function baseOp(ops, key, rule, value, next = () => true) {
+  const result = ops[key](rule, value);
+  if (isFunction(result)) {
+    return result(next);
   }
-  if (isDate(val)) {
-    return new Date(rule).getTime();
-  }
-  return rule;
+  return result;
 }
 
-function toCompare(val) {
-  if (isDate(val)) {
-    return val.getTime();
-  }
-  return val;
+function baseIsOp(ops, key) {
+  return ops[key];
 }
 
-const OPS = {
-  $and: (rules, values) => check(rules, values, true),
-  $or: (rules, values) => check(rules, values, false),
-  $not: (rules, values) => !check(rules, values, true),
-  $gte: (rule, val) => toCompare(val) >= coerce(rule, val),
-  $gt: (rule, val) => toCompare(val) > coerce(rule, val),
-  $lt: (rule, val) => toCompare(val) < coerce(rule, val),
-  $lte: (rule, val) => toCompare(val) <= coerce(rule, val),
-  $eq: (rule, val) => coerce(rule, val) === toCompare(val),
-  $like: (rule, val) => isString(rule) && isString(val) &&
-    isMatch(val.toLowerCase(), rule.toLowerCase().replace(/%/g, '*')),
-  $includes: (rule, val) => (Array.isArray(val) ? val.includes(rule) : [val].includes(rule)),
-  $oneOf: (rule, val) => rule.includes(val),
-  $ne: (rule, val) => coerce(rule, val) !== val,
-};
+export function configure({
+  ops = {},
+  getter = get,
+} = {}) {
+  const allOps = {
+    ...OPS,
+    ...ops,
+  };
+  const op = baseOp.bind(this, allOps);
+  const isOp = baseIsOp.bind(this, allOps);
 
-function op(key, rule, value) {
-  return OPS[key](rule, value);
-}
-
-function isOp(key) {
-  return OPS[key];
-}
-
-function check(rules, values, and = true) {
-  if (isFunction(rules)) {
-    return rules(values);
-  }
-  if (isFunction(values)) {
-    return check(rules, values(rules), and);
-  }
-  const method = and ? 'every' : 'some';
-  if (Array.isArray(rules)) {
-    return rules[method](rule => check(rule, values));
-  }
-  if (!isPlainObject(rules)) {
-    return op('$eq', rules, values);
-  }
-  return Object.keys(rules)[method]((key) => {
-    if (isOp(key)) {
-      return op(key, rules[key], values);
+  const addOp = (cmd, fn) => {
+    if (isPlainObject(cmd)) {
+      return Object.assign(allOps, cmd);
     }
-    if (get(values, key)) {
-      return check(rules[key], get(values, key));
+    return addOp({
+      [cmd]: fn,
+    });
+  };
+
+  const removeOp = (cmd) => {
+    if (Array.isArray(cmd)) {
+      cmd.forEach(removeOp);
+      return;
     }
-    return false;
-  });
+    if (isPlainObject(cmd)) {
+      Object.keys(cmd).filter(k => !!cmd[k]).forEach(removeOp);
+      return;
+    }
+    delete allOps[cmd];
+  };
+
+  const check = (rules, values, and = true) => {
+    if (isFunction(rules)) {
+      return rules(values, and);
+    }
+    if (isFunction(values)) {
+      return check(rules, values(rules, and), and);
+    }
+    const method = and ? 'every' : 'some';
+    if (Array.isArray(rules)) {
+      return rules[method](rule => check(rule, values));
+    }
+    if (isRegExp(rules)) {
+      return op('$regex', rules, values, check);
+    }
+    if (!isPlainObject(rules)) {
+      return op('$eq', rules, values, check);
+    }
+    return Object.keys(rules)[method]((key) => {
+      if (isOp(key)) {
+        return op(key, rules[key], values, check);
+      }
+      const gotVal = getter(values, key);
+      if (gotVal !== undefined) {
+        return check(rules[key], gotVal);
+      }
+      return false;
+    });
+  };
+
+  const jsonRules = function setJsonRules(baseRules) {
+    return values => check(baseRules, values);
+  };
+  jsonRules.addOp = addOp;
+  jsonRules.addOps = addOp;
+  jsonRules.removeOp = removeOp;
+  jsonRules.removeOps = removeOp;
+  return jsonRules;
 }
 
-export default function conditions(rules) {
-  return values => check(rules, values);
-}
+export default configure();

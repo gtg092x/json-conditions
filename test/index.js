@@ -1,17 +1,98 @@
 import { assert } from 'chai'
-import conditions from '../src/index'
+import conditions, { configure } from '../src/index'
 
 describe('Conditions.', () => {
+  it('extra ops', () => {
+    const ops = {
+      $icecream: (rule, arg) => rule ? arg === 'icecream' : arg !== 'icecream',
+    };
+    const conds = configure({
+      ops,
+    });
+    let rules = conds({
+      food: {$icecream: true},
+    });
+    assert(rules({food: 'icecream'}));
+    rules = conds({
+      food: {$icecream: false},
+    });
+    assert(rules({food: 'sandwich'}));
+
+    rules = conds({
+      score: {$square: {$eq: 9}},
+    });
+    assert(!rules({score: -3}));
+    conds.addOp({
+      $square: (rule, arg) => next => next(rule, arg * arg),
+    });
+    assert(rules({score: -3}));
+    conds.removeOp('$square');
+    assert(!rules({score: -3}));
+    conds.addOp({
+      $square: (rule, arg) => next => next(rule, arg * arg),
+    });
+    assert(rules({score: -3}));
+    conds.removeOp(['_', '$square']);
+    assert(!rules({score: -3}));
+    conds.addOp({
+      $square: (rule, arg) => next => next(rule, arg * arg),
+    });
+    assert(rules({score: -3}));
+    conds.removeOp({
+      $square: 1,
+      $icecream: 0,
+    });
+    assert(!rules({score: -3}));
+    rules = conds({
+      food: {$icecream: true},
+    });
+    assert(rules({food: 'icecream'}));
+  });
+  it('square cond', () => {
+    conditions.addOps({
+      $square: (rule, value) => next => next(rule, value * value),
+    });
+    const rules = conditions({
+      score: {$square: 9},
+    });
+    assert(rules({
+      score: 3,
+    }));
+  });
   it('bob', () => {
     const rules = conditions({
       name: 'bob',
     });
     assert(rules({name: 'bob', activities: 'walking'}));
   });
+  it('bobgex', () => {
+    const rules = conditions({
+      name: /^b.*/,
+    });
+    assert(rules({name: 'bob'}));
+  });
+  it('regex', () => {
+    const rules = conditions({ $regex: '^b.*' });
+    assert(rules('bob'));
+    assert(!rules('randbob'));
+  });
   it('and vals', () => {
     const rules = conditions({$and: [{$gt: 1}, {$lt: 10}]});
     assert(rules(4), '4 and');
     assert(!rules(40), '40 and');
+  });
+  it('upper', () => {
+    const rules = conditions({$upper: {$eq: 'HI'}});
+    assert(rules('hi'), 'upper hi');
+  });
+  it('lower', () => {
+    const rules = conditions({$lower: {$eq: 'hi'}});
+    assert(rules('HI'), 'lower hi');
+  });
+  it('dot accessor', () => {
+    const rules = conditions({'name.first': 'matt'});
+    assert(rules({name: {first: 'matt'}}), 'matt dot');
+    assert(!rules({name: {first: 'bob'}}), 'bob dot');
   });
   it('object val mismiatch', () => {
     const rules = conditions({name: 'bob'});
@@ -91,6 +172,11 @@ describe('Conditions.', () => {
     const rules = conditions({$includes: 10});
     assert(rules([10, 11, 12]));
     assert(!rules([1]));
+  });
+  it('exact', () => {
+    const rules = conditions({$exact: {hi: 'mom', bye: 'dad'}});
+    assert(rules({hi: 'mom', bye: 'dad'}));
+    assert(!rules({hi: 'mom', bye: 'dad', ciao: 'bella'}));
   });
   it('deep includes', () => {
     const rules = conditions({
@@ -219,7 +305,7 @@ describe('Conditions.', () => {
         }
       },
       food: {
-        $like: 'SUSHI'
+        $ilike: 'SUSHI'
       }
     });
     assert(rules({
